@@ -33,6 +33,16 @@ flowchart LR
 
 ## Quick start
 
+Docker Desktop needs **6 GB** allocated (Settings, Resources, Memory). The
+default on Windows is half of system RAM, and at 4 GB the Flink job manager
+is killed by the OOM killer while building the job graph.
+
+Set `POSTGRES_PASSWORD` in `.env` to letters and digits only. A `#` or `@` in
+the password breaks every connection URL in the stack, because `#` starts a
+URL fragment.
+
+macOS and Linux:
+
 ```bash
 cp .env.example .env            # set POSTGRES_PASSWORD
 make up                         # builds and starts everything
@@ -40,11 +50,23 @@ make seed-gtfs                  # loads stop and route names, about a minute
 make compat                     # pins the schema subject to BACKWARD
 ```
 
-Then open the Flink UI at <http://localhost:8083> and Grafana at
-<http://localhost:3000>. The dashboard fills in as the first hour of event
-time closes.
+Windows has no `make`, so call compose directly:
 
-`make help` lists every target.
+```bat
+copy .env.example .env
+docker compose up -d --build
+docker compose run --rm gtfs-loader
+docker compose run --rm -e SCHEMA_REGISTRY_URL=http://redpanda:8081 producer python /app/tools/set_compatibility.py
+```
+
+The first build compiles the Flink job with Maven and takes 5 to 10 minutes.
+
+Then open the Flink UI at <http://localhost:8083> and Grafana at
+<http://localhost:3000> (admin / admin). The dashboard fills in as the first
+hour of event time closes.
+
+`make help` lists every target. `docs/architecture.md` has the compose
+topology if you prefer raw `docker compose` commands throughout.
 
 ## Headline numbers
 
@@ -159,6 +181,13 @@ anyway.
 9. **The dashboard shows the aggregates, not the raw stream.** There is no
    per-trip drill-down; the raw events live in Kafka only, for the topic
    retention period of 48 hours.
+10. **The late-record count spikes on a cold start.** When the job starts
+    against a topic that already holds a backlog, the watermark jumps to the
+    newest event in the first batch, so the older events behind it are late by
+    definition. The side output catches them, which is the point, but the
+    late rate in the first minutes of a run is an artifact of catching up and
+    not a property of the feed. Read it after the job has been live for an
+    hour.
 
 ## Attribution and licence
 

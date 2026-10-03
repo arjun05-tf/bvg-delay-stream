@@ -167,14 +167,19 @@ file, not left to chance.
 | --- | --- |
 | Redpanda | 1200 MB |
 | Flink task manager | 1700 MB |
-| Flink job manager | 800 MB |
+| Flink job manager | 1200 MB |
 | TimescaleDB | 700 MB |
 | Producer | 300 MB |
 | Grafana | 250 MB |
-| **Default profile total** | **about 4.3 GB** |
+| **Default profile total** | **about 4.8 GB** |
 
 The lag probe (200 MB) and the load generator (400 MB) sit in optional
 compose profiles, so they only cost memory while a proof is running.
+
+Docker Desktop itself must be given at least 6 GB. The job manager was
+originally sized at 600 MB of process memory and died with an
+`OutOfMemoryError` while building the job graph; 1024 MB is the measured
+floor for Flink 1.20 in application mode with this job.
 
 Redpanda rather than Kafka plus a separate Confluent Schema Registry: one
 process instead of two, with the registry built in, which is worth roughly
