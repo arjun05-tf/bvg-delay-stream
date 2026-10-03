@@ -1,0 +1,522 @@
+{
+  "uid": "bvg-delay-overview",
+  "title": "Berlin transit delays",
+  "tags": [
+    "bvg",
+    "streaming",
+    "flink"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Events aggregated, last hour",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT coalesce(sum(event_count), 0) AS value FROM delay_tumbling_1h WHERE window_start > now() - interval '2 hours'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Average delay, last closed hour",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT coalesce(sum(sum_delay_seconds)::float / nullif(sum(event_count), 0), 0) AS value FROM delay_tumbling_1h WHERE window_start > now() - interval '2 hours'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Punctuality, last hour",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT coalesce(100.0 * sum(early_count + on_time_count) / nullif(sum(event_count), 0), 0) AS value FROM delay_tumbling_1h WHERE window_start > now() - interval '2 hours'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Late records, last hour",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT count(*) AS value FROM late_events WHERE recorded_at > now() - interval '1 hour'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "p99 end-to-end latency, 15 min",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT coalesce(percentile_disc(0.99) WITHIN GROUP (ORDER BY latency_ms), 0) AS value FROM e2e_latency_samples WHERE sampled_at > now() - interval '15 minutes'",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Consumer lag, latest sample",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT coalesce(sum(lag), 0) AS value FROM consumer_lag_samples WHERE sampled_at = (SELECT max(sampled_at) FROM consumer_lag_samples)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Average delay by line (sliding 1h / 5m)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT window_start AS time, route_short_name AS metric, avg_delay_seconds AS value FROM delay_sliding_1h_5m WHERE $__timeFilter(window_start) AND route_short_name IN (SELECT route_short_name FROM delay_sliding_1h_5m WHERE $__timeFilter(window_start) GROUP BY route_short_name ORDER BY sum(event_count) DESC LIMIT 10) ORDER BY 1",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Average delay by line (tumbling 1h)",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 9
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT window_start AS time, route_short_name AS metric, avg_delay_seconds AS value FROM delay_tumbling_1h WHERE $__timeFilter(window_start) AND route_short_name IN (SELECT route_short_name FROM delay_tumbling_1h WHERE $__timeFilter(window_start) GROUP BY route_short_name ORDER BY sum(event_count) DESC LIMIT 10) ORDER BY 1",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Consumer lag by partition",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT sampled_at AS time, 'partition ' || partition::text AS metric, lag AS value FROM consumer_lag_samples WHERE $__timeFilter(sampled_at) ORDER BY 1",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "End-to-end latency percentiles",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 13,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT time_bucket('1 minute', sampled_at) AS time, 'p50' AS metric, percentile_disc(0.5) WITHIN GROUP (ORDER BY latency_ms) AS value FROM e2e_latency_samples WHERE $__timeFilter(sampled_at) GROUP BY 1 UNION ALL SELECT time_bucket('1 minute', sampled_at) AS time, 'p99' AS metric, percentile_disc(0.99) WITHIN GROUP (ORDER BY latency_ms) AS value FROM e2e_latency_samples WHERE $__timeFilter(sampled_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Late records per minute, by lateness",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT time_bucket('1 minute', recorded_at) AS time, CASE WHEN lateness_seconds <= 300 THEN 'under 5 min' WHEN lateness_seconds <= 900 THEN '5 to 15 min' ELSE 'over 15 min' END AS metric, count(*) AS value FROM late_events WHERE $__timeFilter(recorded_at) GROUP BY 1, 2 ORDER BY 1",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "Worst stops, last closed hour",
+      "datasource": {
+        "type": "postgres",
+        "uid": "timescale"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 21,
+        "w": 12,
+        "h": 8
+      },
+      "options": {
+        "showHeader": true
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT route_short_name AS line, stop_name AS stop, round(avg_delay_seconds::numeric, 1) AS avg_delay_s, max_delay_seconds AS max_delay_s, event_count AS events FROM delay_tumbling_1h WHERE window_start = (SELECT max(window_start) FROM delay_tumbling_1h) AND event_count >= 5 ORDER BY avg_delay_seconds DESC LIMIT 20",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "editable": true
+}

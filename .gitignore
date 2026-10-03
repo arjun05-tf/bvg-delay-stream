@@ -1,0 +1,12 @@
+!proto/**/*.proto
+*.pb
+*.py[cod]
+.env
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+__pycache__/
+producer/src/bvg_producer/generated/
+snapshots/
+target/

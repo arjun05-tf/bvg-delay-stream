@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package delay.v1;
+
+option java_package = "de.berlinstream.delay.proto";
+option java_outer_classname = "StopEventProto";
+option java_multiple_files = true;
+
+// A single observed stop event: one vehicle, one stop, one arrival or
+// departure that the feed reported as already having happened.
+//
+// The producer emits one StopEvent per (trip, stop, event_type) whose
+// reported time is at or before the feed header timestamp. Predictions for
+// stops still in the future are not emitted, because their timestamps run
+// ahead of wall clock and would push event-time watermarks into the future.
+//
+// Schema evolution rules for this message (registry compatibility: BACKWARD):
+//   - Only ever add fields with new, unused field numbers.
+//   - Never change the type or the number of an existing field.
+//   - Never renumber. To retire a field, delete it and add its number and
+//     name to the `reserved` statements below, so it can never be reused.
+//   - Consumers compiled against an older copy of this file skip unknown
+//     fields, which is what makes a producer-first rollout safe.
+message StopEvent {
+  // Field numbers 1-15 use a one-byte tag. Keep hot fields in that range.
+
+  // GTFS trip identifier, as published in the realtime feed.
+  string trip_id = 1;
+
+  // Service date of the trip in YYYYMMDD form, as published in the feed.
+  // Combined with trip_id this identifies one trip instance.
+  string start_date = 2;
+
+  // GTFS route identifier. VBB route ids look like "17330_700".
+  string route_id = 3;
+
+  // GTFS direction id, 0 or 1. -1 when the feed omitted it.
+  int32 direction_id = 4;
+
+  // DHID stop identifier, for example "de:11000:900100516::1".
+  string stop_id = 5;
+
+  // Position of this stop within the trip, zero based.
+  int32 stop_sequence = 6;
+
+  EventType event_type = 7;
+
+  // Reported time of the event, Unix epoch seconds, UTC.
+  // This is the event-time attribute the streaming job windows on.
+  int64 observed_time = 8;
+
+  // Delay against the published schedule, in seconds. Positive means late.
+  // Only meaningful when has_delay is true: a large part of the VBB feed
+  // carries a time without a delay, and zero is a real, common value, so
+  // absence cannot be encoded as 0.
+  int32 delay_seconds = 9;
+
+  bool has_delay = 10;
+
+  // GTFS-RT ScheduleRelationship of the stop time update:
+  // 0 SCHEDULED, 1 SKIPPED, 2 NO_DATA, 3 UNSCHEDULED.
+  int32 schedule_relationship = 11;
+
+  // Header timestamp of the feed snapshot this event came from.
+  int64 feed_timestamp = 12;
+
+  // Wall-clock time at which the producer serialised this event.
+  // Used together with the sink write time to measure end-to-end latency.
+  int64 ingest_timestamp = 13;
+
+  // Feed entity id. Not stable across snapshots, kept for debugging only.
+  // Never use it as a key.
+  string feed_entity_id = 14;
+
+  enum EventType {
+    EVENT_TYPE_UNSPECIFIED = 0;
+    EVENT_TYPE_ARRIVAL = 1;
+    EVENT_TYPE_DEPARTURE = 2;
+  }
+}

@@ -1,0 +1,282 @@
+# Berlin transit delay pipeline.
+#
+# Sized for a laptop with 8 GB of RAM. Every service carries an explicit
+# mem_limit, and the total of the default profile is about 4.3 GB, which
+# leaves room for the host, Docker itself and an editor. The load test and
+# the lag probe live in optional profiles so they only consume memory while a
+# proof is running.
+#
+#   docker compose up -d                 the pipeline
+#   docker compose --profile probe up -d lag sampling for the load test
+#   docker compose --profile load run --rm loadgen   the 10x load test
+
+name: bvg-delay-stream
+
+x-stop-grace: &stop-grace
+  stop_grace_period: 30s
+
+services:
+  redpanda:
+    image: redpandadata/redpanda:v24.2.18
+    <<: *stop-grace
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=900M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092,EXTERNAL://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092,EXTERNAL://localhost:19092
+      - --schema-registry-addr=0.0.0.0:8081
+    mem_limit: 1200m
+    ports:
+      - "19092:19092"   # Kafka API from the host, for rpk and the tools
+      - "8081:8081"     # Schema registry
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  # Creates the topics with the partition counts the job expects, then exits.
+  # Leaving topic creation to auto-create would give every topic one
+  # partition, which makes the consumer lag proof meaningless.
+  topic-init:
+    image: redpandadata/redpanda:v24.2.18
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        rpk -X brokers=redpanda:9092 topic create stop-events \
+            --partitions 6 --replicas 1 --topic-config retention.ms=172800000 || true
+        rpk -X brokers=redpanda:9092 topic create stop-events.dlq \
+            --partitions 1 --replicas 1 --topic-config retention.ms=604800000 || true
+        rpk -X brokers=redpanda:9092 topic list
+    restart: "no"
+
+  timescaledb:
+    image: timescale/timescaledb:2.17.2-pg16
+    <<: *stop-grace
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-delays}
+      POSTGRES_USER: ${POSTGRES_USER:-delays}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      # Tuned down from the image defaults to fit the memory budget.
+      TIMESCALEDB_TELEMETRY: "off"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=40
+      - -c
+      - timescaledb.max_background_workers=4
+    mem_limit: 700m
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+      - ./sql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-delays} -d ${POSTGRES_DB:-delays}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+  # Loads stops.txt and routes.txt, then exits. Re-run it after a GTFS
+  # release: make seed-gtfs.
+  gtfs-loader:
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      PG_DSN: postgresql://${POSTGRES_USER:-delays}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-delays}
+      GTFS_URL: ${GTFS_URL:-https://unternehmen.vbb.de/gtfs}
+      STOP_ID_PREFIX: ${STOP_ID_PREFIX-de:11000:}
+    command: ["python", "/app/tools/gtfs_loader.py"]
+    mem_limit: 400m
+    restart: "no"
+
+  producer:
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
+    <<: *stop-grace
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    environment:
+      FEED_URL: ${FEED_URL:-https://production.gtfsrt.vbb.de/data}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-30}
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      SCHEMA_REGISTRY_URL: http://redpanda:8081
+      TOPIC_STOP_EVENTS: stop-events
+      TOPIC_DLQ: stop-events.dlq
+      STOP_ID_PREFIX: ${STOP_ID_PREFIX-de:11000:}
+      MAX_EVENT_AGE_SECONDS: ${MAX_EVENT_AGE_SECONDS:-3600}
+      # Recording every snapshot is what makes the replay and load proofs
+      # possible. 2880 files is 24 hours at one snapshot every 30 seconds.
+      RECORD_DIR: /snapshots
+      RECORD_RETENTION: ${RECORD_RETENTION:-2880}
+      METRICS_PORT: 9100
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    mem_limit: 300m
+    ports:
+      - "9100:9100"
+    volumes:
+      - snapshots:/snapshots
+
+  jobmanager:
+    build:
+      context: .
+      dockerfile: flink-job/Dockerfile
+    <<: *stop-grace
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+      topic-init:
+        condition: service_completed_successfully
+    # Application mode: the cluster exists to run this one job, which is both
+    # lighter than a session cluster and closer to how streaming jobs are
+    # deployed in practice.
+    command: ["standalone-job", "--job-classname", "de.berlinstream.delay.DelayPipeline"]
+    environment: &flink-env
+      FLINK_PROPERTIES: |
+        jobmanager.rpc.address: jobmanager
+        jobmanager.memory.process.size: 1024m
+        taskmanager.memory.process.size: 1400m
+        taskmanager.numberOfTaskSlots: 2
+        parallelism.default: ${JOB_PARALLELISM:-2}
+        state.backend.type: hashmap
+        execution.checkpointing.dir: file:///flink-checkpoints
+        rest.flamegraph.enabled: true
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      TOPIC_STOP_EVENTS: stop-events
+      TOPIC_DLQ: stop-events.dlq
+      CONSUMER_GROUP: ${CONSUMER_GROUP:-delay-pipeline}
+      STARTING_OFFSETS: ${STARTING_OFFSETS:-committed}
+      JDBC_URL: jdbc:postgresql://timescaledb:5432/${POSTGRES_DB:-delays}
+      JDBC_USER: ${POSTGRES_USER:-delays}
+      JDBC_PASSWORD: ${POSTGRES_PASSWORD}
+      WATERMARK_OUT_OF_ORDERNESS_S: ${WATERMARK_OUT_OF_ORDERNESS_S:-300}
+      ALLOWED_LATENESS_S: ${ALLOWED_LATENESS_S:-600}
+      SOURCE_IDLE_TIMEOUT_S: ${SOURCE_IDLE_TIMEOUT_S:-0}
+      TUMBLING_WINDOW_S: ${TUMBLING_WINDOW_S:-3600}
+      SLIDING_WINDOW_S: ${SLIDING_WINDOW_S:-3600}
+      SLIDING_SLIDE_S: ${SLIDING_SLIDE_S:-300}
+      CHECKPOINT_INTERVAL_S: ${CHECKPOINT_INTERVAL_S:-30}
+      CHECKPOINT_DIR: file:///flink-checkpoints
+      JOB_PARALLELISM: ${JOB_PARALLELISM:-2}
+      SINK_BATCH_SIZE: ${SINK_BATCH_SIZE:-500}
+    mem_limit: 1200m
+    ports:
+      - "8083:8081"   # Flink web UI
+    volumes:
+      - checkpoints:/flink-checkpoints
+
+  taskmanager:
+    build:
+      context: .
+      dockerfile: flink-job/Dockerfile
+    <<: *stop-grace
+    depends_on:
+      - jobmanager
+    command: ["taskmanager"]
+    environment: *flink-env
+    mem_limit: 1700m
+    volumes:
+      - checkpoints:/flink-checkpoints
+
+  grafana:
+    image: grafana/grafana:11.3.1
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_INSTALL_PLUGINS: ""
+      PG_HOST: timescaledb:5432
+      PG_DB: ${POSTGRES_DB:-delays}
+      PG_USER: ${POSTGRES_USER:-delays}
+      PG_PASSWORD: ${POSTGRES_PASSWORD}
+    mem_limit: 250m
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+  # Profile: probe. Samples consumer lag into TimescaleDB during a load test.
+  lag-probe:
+    profiles: ["probe"]
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      PG_DSN: postgresql://${POSTGRES_USER:-delays}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-delays}
+      TOPIC_STOP_EVENTS: stop-events
+      CONSUMER_GROUP: ${CONSUMER_GROUP:-delay-pipeline}
+      LAG_SAMPLE_INTERVAL_S: ${LAG_SAMPLE_INTERVAL_S:-10}
+    command: ["python", "/app/tools/lag_probe.py"]
+    mem_limit: 200m
+
+  # Profile: load. Replays recorded snapshots at SPEEDUP times natural rate.
+  loadgen:
+    profiles: ["load"]
+    build:
+      context: .
+      dockerfile: producer/Dockerfile
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      SCHEMA_REGISTRY_URL: http://redpanda:8081
+      TOPIC_STOP_EVENTS: stop-events
+      TOPIC_DLQ: stop-events.dlq
+      STOP_ID_PREFIX: ${STOP_ID_PREFIX-de:11000:}
+      SNAPSHOT_DIR: /snapshots
+      SPEEDUP: ${SPEEDUP:-10}
+      LOOPS: ${LOOPS:-1}
+      NATURAL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-30}
+    command: ["python", "/app/tools/loadgen.py"]
+    mem_limit: 400m
+    volumes:
+      - snapshots:/snapshots
+
+volumes:
+  redpanda-data:
+  timescale-data:
+  checkpoints:
+  snapshots:
