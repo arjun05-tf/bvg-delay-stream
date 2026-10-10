@@ -18,19 +18,20 @@ punctuality metrics by line, station and hour on **event time**, and serves
 them on a live dashboard. Everything runs locally under `docker compose` on a
 laptop with 8 GB of RAM.
 
-> The stream above is not decoration: every dot is one StopTimeUpdate, coloured
-> by the delay the feed reported for it, drawn in the proportions of a real
+> The vehicles running along the line above are not decoration: each dot is one
+> StopTimeUpdate, coloured by the delay the feed reported for it, drawn in the
+> proportions of a real snapshot, and the board underneath counts that same
 > snapshot. Refresh it with `python tools/feed_snapshot.py`, then rebuild the
 > images with `python .github/assets/make_assets.py`.
 
 ---
 
-## Topology
+## Network
 
-<img src=".github/assets/topology.svg" alt="VBB feed, producer, stop-events topic, Flink, TimescaleDB, Grafana, with a dead letter topic and a late-event side output" width="100%">
+<img src=".github/assets/network.svg" alt="The pipeline drawn as a transit map: feed, producer, stop-events, Flink, TimescaleDB and Grafana, with branch lines to the dead letter topic and the late-event side output" width="100%">
 
 <details>
-<summary><b>The same topology as a mermaid graph, with every edge labelled</b></summary>
+<summary><b>The same network as a mermaid graph, with every edge labelled</b></summary>
 
 <br>
 
