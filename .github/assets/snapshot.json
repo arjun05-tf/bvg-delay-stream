@@ -1,0 +1,53 @@
+{
+  "feed_url": "https://production.gtfsrt.vbb.de/data",
+  "header_timestamp": 1791643161,
+  "fetched_utc": "2026-10-10 14:39 UTC",
+  "fetch_seconds": 0.99,
+  "bytes": 7132844,
+  "trip_updates": 6619,
+  "stop_time_updates": 139681,
+  "berlin_stop_time_updates": 96558,
+  "with_delay": 65139,
+  "histogram": [
+    {
+      "label": "early, over 1 min",
+      "count": 1537
+    },
+    {
+      "label": "early, under 1 min",
+      "count": 1214
+    },
+    {
+      "label": "exactly on time",
+      "count": 46636
+    },
+    {
+      "label": "late, under 1 min",
+      "count": 4891
+    },
+    {
+      "label": "1 to 3 min",
+      "count": 5081
+    },
+    {
+      "label": "3 to 5 min",
+      "count": 1933
+    },
+    {
+      "label": "5 to 10 min",
+      "count": 1902
+    },
+    {
+      "label": "over 10 min",
+      "count": 1945
+    }
+  ],
+  "percentiles": {
+    "p5": 0,
+    "p50": 0,
+    "p90": 180,
+    "p95": 412,
+    "p99": 1260
+  },
+  "on_time_within_3_min": 90.6
+}

@@ -1,9 +1,38 @@
-# Berlin transit delay stream
+<div align="center">
+
+<img src=".github/assets/hero.svg" alt="bvg-delay-stream: Berlin transit punctuality computed on event time with Kafka, Flink and TimescaleDB" width="100%">
+
+<br>
+
+![Python](https://img.shields.io/badge/producer-Python%203.12-f2b53c?style=flat-square&labelColor=0b0f14)
+![Flink](https://img.shields.io/badge/Flink-1.20%20%C2%B7%20Java%2017-4ade80?style=flat-square&labelColor=0b0f14)
+![Kafka](https://img.shields.io/badge/transport-Kafka%20protocol-4cc9f0?style=flat-square&labelColor=0b0f14)
+![Protobuf](https://img.shields.io/badge/wire-protobuf%20%2B%20registry-a78bfa?style=flat-square&labelColor=0b0f14)
+![Sink](https://img.shields.io/badge/sink-TimescaleDB-fb923c?style=flat-square&labelColor=0b0f14)
+![Licence](https://img.shields.io/badge/feed-CC%20BY%204.0-8b98a6?style=flat-square&labelColor=0b0f14)
+
+</div>
 
 A real-time pipeline over the VBB/BVG GTFS-Realtime feed. It computes
 punctuality metrics by line, station and hour on **event time**, and serves
 them on a live dashboard. Everything runs locally under `docker compose` on a
 laptop with 8 GB of RAM.
+
+> The stream above is not decoration: every dot is one StopTimeUpdate, coloured
+> by the delay the feed reported for it, drawn in the proportions of a real
+> snapshot. Refresh it with `python tools/feed_snapshot.py`, then rebuild the
+> images with `python .github/assets/make_assets.py`.
+
+---
+
+## Topology
+
+<img src=".github/assets/topology.svg" alt="VBB feed, producer, stop-events topic, Flink, TimescaleDB, Grafana, with a dead letter topic and a late-event side output" width="100%">
+
+<details>
+<summary><b>The same topology as a mermaid graph, with every edge labelled</b></summary>
+
+<br>
 
 ```mermaid
 flowchart LR
@@ -30,6 +59,10 @@ flowchart LR
     agg --> grafana
     late --> grafana
 ```
+
+</details>
+
+---
 
 ## Quick start
 
@@ -71,15 +104,31 @@ topology if you prefer raw `docker compose` commands throughout.
 ## Headline numbers
 
 Measured properties of the source feed, from a live snapshot on
-2026-10-02 21:37 UTC:
+2026-10-10 14:39 UTC, written by `python tools/feed_snapshot.py`:
 
 | Property | Value |
 | --- | --- |
-| TripUpdate entities per snapshot | 5021 |
-| StopTimeUpdates per snapshot | 82892 |
-| Snapshot size | about 32 MB as JSON |
+| TripUpdate entities per snapshot | 6,619 |
+| StopTimeUpdates per snapshot | 139,681 |
+| Of those, inside `de:11000:` (Berlin) | 96,558 |
+| Of those, carrying a delay | 65,139 (47%) |
+| Snapshot size | 7.1 MB protobuf, about 32 MB as JSON |
 | Poll interval | 30 s |
 | Authentication | none, CC BY 4.0 |
+
+An evening snapshot taken on 2026-10-02 at 21:37 UTC held 5,021 entities and
+82,892 stop time updates, so the volume moves with the time of day by roughly a
+factor of two.
+
+### What the feed says about punctuality
+
+<img src=".github/assets/delays.svg" alt="Distribution of reported delay across one live snapshot, from early to over ten minutes late" width="100%">
+
+This is the input distribution, not a result of the pipeline: it is what the
+aggregates are computed over, and it explains two decisions further down. Seven
+in ten delay-carrying events report exactly zero, which is why a mean delay
+alone is a poor punctuality metric, and the tail runs to a p99 of 21 minutes,
+which is why the dashboard carries percentiles next to the mean.
 
 Pipeline numbers, to be filled in from a real 24 hour run. They are blank on
 purpose: see [docs/proofs.md](docs/proofs.md) for the procedure that produces
@@ -92,7 +141,7 @@ each one.
 | p99 end-to-end latency, producer to sink | |
 | Peak consumer lag under 10x load | |
 | Late-record rate | |
-| Delay coverage (share of events carrying a delay) | |
+| Delay coverage (share of events carrying a delay) | 47% in the snapshot above; the 24 hour figure is still open |
 
 ## What this demonstrates
 
@@ -114,6 +163,14 @@ watermark lag of hours. The producer emits only stop events whose reported
 time is at or before the feed header timestamp, and that time is the event
 time. Full reasoning in [docs/architecture.md](docs/architecture.md).
 
+<img src=".github/assets/windows.svg" alt="Tumbling and sliding windows over the same stream, closed by an advancing watermark, with a late record routed to a side output" width="100%">
+
+Both window shapes run over that one stream: the tumbling hour is what the
+hourly table stores, the sliding hour every five minutes is what makes the
+dashboard move between full hours. The watermark decides when each window is
+done, and a record that lands behind it goes to `late_events` rather than into
+the bin.
+
 **There are no vehicle positions in this feed.** Every entity is a
 `trip_update`; the upstream VDV-454 source carries no coordinates. The project
 therefore measures punctuality and does not plot vehicles.
@@ -131,7 +188,7 @@ that choice is visible rather than assumed.
 proto/            StopEvent schema, shared by the producer and the job
 producer/         Python producer: poll, transform, publish, record
 flink-job/        Flink 1.20 job in Java 17
-tools/            GTFS loader, load generator, lag probe, replay verifier
+tools/            GTFS loader, load generator, lag probe, replay verifier, feed snapshot
 sql/              Sink schema, applied on first database boot
 grafana/          Provisioned datasource and dashboard
 docs/             Architecture, recovery semantics, proofs
